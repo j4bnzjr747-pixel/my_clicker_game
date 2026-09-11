@@ -776,6 +776,7 @@ authLogin.addEventListener('click', async () => {
     if (!name || !pass) { authError.innerText = 'Заполни оба поля'; return; }
     authLogin.disabled = true; authLogin.innerText = 'ВХОД...';
     try {
+        await ensureAuth();
         const snap = await get(ref(db, 'users/' + name));
         if (!snap.exists()) { authError.innerText = 'Пользователь не найден'; return; }
         const data = snap.val();
@@ -798,6 +799,7 @@ authRegister.addEventListener('click', async () => {
     if (pass.length < 2) { authError.innerText = 'Пароль слишком короткий'; return; }
     authRegister.disabled = true; authRegister.innerText = 'СОЗДАНИЕ...';
     try {
+        await ensureAuth();
         const snap = await get(ref(db, 'users/' + name));
         if (snap.exists()) { authError.innerText = 'Этот ник уже занят'; return; }
         const now = Date.now();
