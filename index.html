@@ -28,10 +28,7 @@ body {
     overflow-y: auto;
 }
 .screen.active { display: flex; }
-
-/* Главный экран — центрирован */
 #mainScreen { justify-content: center; }
-/* Магазины — сверху, чтобы скроллились */
 #upgradesScreen, #purchasesScreen, #adminScreen { justify-content: flex-start; }
 
 #demonGlow {
@@ -260,7 +257,6 @@ body.crit-mode .upgrade-cost { color: #ff0033; }
 }
 .upgrade-btn:disabled::after { opacity: 0 !important; }
 
-/* ===== ПОКУПКИ ===== */
 .purchases-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -363,7 +359,6 @@ body.crit-mode .upgrade-cost { color: #ff0033; }
     line-height: 1.5;
 }
 
-/* ===== АДМИНКА ===== */
 #adminScreen .admin-block {
     width: 100%;
     max-width: 400px;
@@ -413,10 +408,6 @@ body.crit-mode .upgrade-cost { color: #ff0033; }
     -webkit-tap-highlight-color: transparent;
 }
 #adminScreen .admin-btn:active { transform: scale(0.97); }
-#adminScreen .admin-btn.danger {
-    background: linear-gradient(135deg, #ff3b30, #a00);
-    margin-top: 8px;
-}
 .admin-list-item {
     display: flex;
     align-items: center;
@@ -578,7 +569,25 @@ body.crit-mode .nav button.active {
     <button id="navAdmin" class="demon-btn"><span>⚙️ Админ</span></button>
 </div>
 
-<script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getDatabase, ref, onValue, push, set, remove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+const firebaseConfig = {
+    apiKey: "AIzaSyDretPeR52fWR1kqkUQ-1MkEz4_QHpZ_HI",
+    authDomain: "myicker.firebaseapp.com",
+    databaseURL: "https://myicker-default-rtdb.firebaseio.com",
+    projectId: "myicker",
+    storageBucket: "myicker.firebasestorage.app",
+    messagingSenderId: "384406957699",
+    appId: "1:384406957699:web:7fca8968570664a67135b6"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const photosRef = ref(db, 'photos');
+
+// ==================== ИГРА ====================
 let score = 0;
 let clickBonus = 0;
 let critLevel = 0;
@@ -591,24 +600,20 @@ const upgrades = [
     { id: 'crit',  name: '🎯 Критический клик', baseCost: 100, costMult: 1.3, maxLevel: 50, level: 0 }
 ];
 
-// ===== ХРАНИЛИЩЕ ФОТО (localStorage) =====
-const STORAGE_KEY = 'myClickerPhotos';
+let photos = []; // теперь с сервера
+let localOwned = {}; // что куплено на этом устройстве
+let currentImageData = null;
 
-let photos = []; // { id, name, price, img (dataURL), owned }
+const OWNED_KEY = 'clicker_owned_v1';
 
-function loadPhotos() {
+function loadOwned() {
     try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) photos = JSON.parse(raw);
-    } catch(e) { photos = []; }
+        const raw = localStorage.getItem(OWNED_KEY);
+        localOwned = raw ? JSON.parse(raw) : {};
+    } catch(e) { localOwned = {}; }
 }
-
-function savePhotos() {
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(photos));
-    } catch(e) {
-        alert('Не хватило места для сохранения. Попробуй фото меньшего размера.');
-    }
+function saveOwned() {
+    try { localStorage.setItem(OWNED_KEY, JSON.stringify(localOwned)); } catch(e) {}
 }
 
 const scoreEl = document.getElementById('score');
@@ -635,8 +640,6 @@ const photoPrice = document.getElementById('photoPrice');
 const addPhotoBtn = document.getElementById('addPhotoBtn');
 const adminList = document.getElementById('adminList');
 const photoCount = document.getElementById('photoCount');
-
-let currentImageData = null;
 
 const colors = ['#ffcc00', '#ff3b30', '#34c759', '#af52de', '#00c7be', '#ff9500', '#007aff', '#ff2d55'];
 let colorIdx = 0;
@@ -771,19 +774,40 @@ function buyUpgrade(i) {
     updateUI();
 }
 
-// ===== ПОКУПКИ =====
+// ===== ФОТО ИЗ FIREBASE =====
+function loadPhotosFromCloud() {
+    onValue(photosRef, (snapshot) => {
+        photos = [];
+        snapshot.forEach((child) => {
+            const p = child.val();
+            p.id = child.key;
+            photos.push(p);
+        });
+        // Сортируем по дате добавления (по ID)
+        photos.sort((a, b) => (a.id > b.id ? 1 : -1));
+        renderPurchases();
+        renderAdminList();
+    }, (error) => {
+        console.error('Firebase error:', error);
+        emptyMsg.style.display = 'block';
+        emptyMsg.innerText = 'Ошибка загрузки фото: ' + error.message;
+    });
+}
+
 function renderPurchases() {
     purchasesGrid.innerHTML = '';
 
     if (photos.length === 0) {
         emptyMsg.style.display = 'block';
+        emptyMsg.innerHTML = 'Пока нет фотографий.<br>Зайди в админку и загрузи первую!';
         return;
     }
     emptyMsg.style.display = 'none';
 
     photos.forEach((photo, i) => {
+        const isOwned = !!localOwned[photo.id];
         const card = document.createElement('div');
-        card.className = 'photo-card' + (photo.owned ? ' owned' : ' locked');
+        card.className = 'photo-card' + (isOwned ? ' owned' : ' locked');
 
         const imgWrap = document.createElement('div');
         imgWrap.className = 'photo-img';
@@ -819,7 +843,8 @@ function renderPurchases() {
 function updatePurchases() {
     photos.forEach(photo => {
         if (!photo._cardEl) return;
-        if (photo.owned) {
+        const isOwned = !!localOwned[photo.id];
+        if (isOwned) {
             photo._cardEl.classList.remove('locked');
             photo._cardEl.classList.add('owned');
             photo._priceEl.innerText = '✅ Куплено';
@@ -838,12 +863,12 @@ function updatePurchases() {
 
 function buyPhoto(i) {
     const photo = photos[i];
-    if (photo.owned) return;
+    if (localOwned[photo.id]) return;
     if (score < photo.price) return;
 
     score -= photo.price;
-    photo.owned = true;
-    savePhotos();
+    localOwned[photo.id] = true;
+    saveOwned();
     updateUI();
 }
 
@@ -855,8 +880,6 @@ photoInput.addEventListener('change', (e) => {
     const reader = new FileReader();
     reader.onload = (ev) => {
         const rawData = ev.target.result;
-
-        // Сжимаем изображение, чтобы влезло в localStorage
         const img = new Image();
         img.onload = () => {
             const maxSide = 600;
@@ -886,25 +909,29 @@ addPhotoBtn.addEventListener('click', () => {
     const price = parseInt(photoPrice.value);
     if (!price || price <= 0) { alert('Введи цену больше 0'); return; }
 
-    photos.push({
-        id: Date.now(),
+    addPhotoBtn.disabled = true;
+    addPhotoBtn.innerText = 'Загрузка...';
+
+    const newRef = push(photosRef);
+    set(newRef, {
         name: name,
         price: price,
-        img: currentImageData,
-        owned: false
+        img: currentImageData
+    }).then(() => {
+        // Сброс формы
+        currentImageData = null;
+        previewImg.style.display = 'none';
+        previewImg.src = '';
+        photoInput.value = '';
+        photoName.value = '';
+        photoPrice.value = '';
+        addPhotoBtn.disabled = false;
+        addPhotoBtn.innerText = '➕ Добавить в магазин';
+    }).catch((error) => {
+        alert('Ошибка: ' + error.message);
+        addPhotoBtn.disabled = false;
+        addPhotoBtn.innerText = '➕ Добавить в магазин';
     });
-    savePhotos();
-
-    // Сброс формы
-    currentImageData = null;
-    previewImg.style.display = 'none';
-    previewImg.src = '';
-    photoInput.value = '';
-    photoName.value = '';
-    photoPrice.value = '';
-
-    renderPurchases();
-    renderAdminList();
 });
 
 function renderAdminList() {
@@ -930,7 +957,7 @@ function renderAdminList() {
         nm.innerText = photo.name;
         const pr = document.createElement('div');
         pr.className = 'price';
-        pr.innerText = fmtPrice(photo.price) + (photo.owned ? ' · ✅ куплено' : '');
+        pr.innerText = fmtPrice(photo.price);
         info.appendChild(nm);
         info.appendChild(pr);
 
@@ -939,10 +966,7 @@ function renderAdminList() {
         del.innerText = 'Удалить';
         del.addEventListener('click', () => {
             if (!confirm('Удалить «' + photo.name + '»?')) return;
-            photos.splice(i, 1);
-            savePhotos();
-            renderPurchases();
-            renderAdminList();
+            remove(ref(db, 'photos/' + photo.id));
         });
 
         item.appendChild(img);
@@ -1050,7 +1074,7 @@ cheatBtn.addEventListener('click', () => {
     updateUI();
 });
 
-// ===== ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК =====
+// ===== ВКЛАДКИ =====
 function activateTab(tab) {
     mainScreen.classList.toggle('active', tab === 'main');
     upgradesScreen.classList.toggle('active', tab === 'upgrades');
@@ -1075,12 +1099,12 @@ navAdmin.addEventListener('click', () => activateTab('admin'));
 clickBtn.addEventListener('touchstart', addScore, { passive: false });
 clickBtn.addEventListener('mousedown', addScore);
 
-loadPhotos();
+// ===== СТАРТ =====
+loadOwned();
 renderShop();
-renderPurchases();
-renderAdminList();
 updateUI();
 setNormalColor();
+loadPhotosFromCloud();
 </script>
 </body>
 </html>
