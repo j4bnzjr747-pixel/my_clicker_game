@@ -745,7 +745,7 @@ inboxOk.addEventListener('click', () => {
     if (m && currentUser) update(ref(db, 'users/' + currentUser.name + '/adminMessages/' + m.id), { read: true }).catch(()=>{});
     inboxIndex++; showInboxCurrent();
 });
-function initAuth() {
+async function initAuth() {
     let saved = null;
     try { const raw = localStorage.getItem(CURRENT_USER_KEY); if (raw) saved = JSON.parse(raw); } catch(e) {}
     if (!saved || !saved.name || !saved.password) { showScreen('auth'); return; }
@@ -758,6 +758,7 @@ function initAuth() {
         critLevel = upgrades[1].level;
     } else { score = 0; clickBonus = 0; critLevel = 0; localOwned = {}; }
     showScreen('menu'); updateUI();
+    await ensureAuth();
     update(ref(db, 'users/' + saved.name), { lastLogin: Date.now(), lastActivity: Date.now() }).catch(()=>{});
     loadFriends();
     get(ref(db, 'users/' + saved.name)).then(snap => {
@@ -1632,10 +1633,14 @@ setInterval(pingActivity, 60000);
 renderUpgrades();
 updateUI();
 setNormalColor();
-loadPhotosFromCloud();
-loadUsersFromCloud();
-checkShutdown();
-initAuth();
+
+(async () => {
+    await ensureAuth();
+    loadPhotosFromCloud();
+    loadUsersFromCloud();
+    checkShutdown();
+    initAuth();
+})();
 </script>
 </body>
 </html>
